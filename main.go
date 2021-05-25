@@ -13,10 +13,10 @@ import (
 	"github.com/dghubble/go-twitter/twitter"
 )
 
-var phoneNumberRegex = regexp.MustCompile(`(\+\d{1,2}\s)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}`)
+var phoneNumberRegex = regexp.MustCompile(`\(?\d{3}\)?[-\.]? *\d{3}[-\.]? *[-\.]?\d{4}`)
 
 func getTweets(bearerString string) []twitter.Tweet {
-	urlQuery := "https://api.twitter.com/1.1/search/tweets.json?q=" + url.QueryEscape(`("my number is") OR ("call me") OR ("phone number") OR ("call")`) + "&result_type=recent&tweet_mode=extended&count=100&lang=en"
+	urlQuery := "https://api.twitter.com/1.1/search/tweets.json?q=" + url.QueryEscape(`("my number") OR ("call me") OR ("phone number") OR ("call") OR ("reach out")`) + "&result_type=recent&tweet_mode=extended&count=100&lang=en"
 
 	client := &http.Client{}
 
