@@ -2,11 +2,13 @@
 package main
 
 import (
+	"TophandourNumberBot/config"
 	"encoding/json"
 	"io/ioutil"
 	"net/http"
 	"net/url"
-	"os"
+
+	//"os"
 	"regexp"
 
 	"github.com/bwmarrin/discordgo"
@@ -31,9 +33,8 @@ func getTweets(bearerString string) []twitter.Tweet {
 	resp, _ := client.Do(req)
 	defer resp.Body.Close()
 	bodybytes, _ := ioutil.ReadAll(resp.Body)
-	bodyAsString := string(bodybytes)
 	responseObject := twitter.Search{}
-	json.Unmarshal([]byte(bodyAsString), &responseObject)
+	json.Unmarshal(bodybytes, &responseObject)
 	return responseObject.Statuses
 }
 
@@ -42,17 +43,17 @@ func postDiscord(discord *discordgo.Session, message string, channelString strin
 }
 
 func main() {
-	tweetBearerString := string(os.Args[1])
-	botSecretString := string(os.Args[2])
-	channelIDString := string(os.Args[3])
-	discord, _ := discordgo.New("Bot " + botSecretString)
+	fileBytes, _ := ioutil.ReadFile("TophandourNumberBot.config")
+	configObject := config.Configuration{}
+	json.Unmarshal(fileBytes, &configObject)
+	discord, _ := discordgo.New("Bot " + configObject.BotSecretString)
 	discord.Open()
 
-	tweetList := getTweets(tweetBearerString)
+	tweetList := getTweets(configObject.TweetBearerString)
 	for i := range tweetList {
 		_, blocked := blockList[tweetList[i].User.ScreenName]
 		if phoneNumberRegex.MatchString(tweetList[i].FullText) && !blocked {
-			postDiscord(discord, ">>> https://twitter.com/"+url.QueryEscape(tweetList[i].User.ScreenName)+"/status/"+tweetList[i].IDStr, channelIDString)
+			postDiscord(discord, ">>> https://twitter.com/"+url.QueryEscape(tweetList[i].User.ScreenName)+"/status/"+tweetList[i].IDStr, configObject.ChannelIDString)
 		}
 	}
 	discord.Close()
