@@ -2,7 +2,11 @@
 package config
 
 type Configuration struct {
-	TweetBearerString string
-	BotSecretString   string
-	ChannelIDString   string
+	TwitterAPI          string
+	TwitterAPISecret    string
+	TweetBearerString   string
+	BotSecretString     string
+	ChannelIDString     string
+	TwitterAccess       string
+	TwitterAccessSecret string
 }

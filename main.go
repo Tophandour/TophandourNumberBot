@@ -2,17 +2,24 @@
 package main
 
 import (
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+
 	"TophandourNumberBot/config"
 	"encoding/json"
 	"io/ioutil"
-	"net/http"
 	"net/url"
-
-	//"os"
 	"regexp"
 
-	"github.com/bwmarrin/discordgo"
+	"github.com/coreos/pkg/flagutil"
 	"github.com/dghubble/go-twitter/twitter"
+	"github.com/dghubble/oauth1"
+
+	"github.com/bwmarrin/discordgo"
 )
 
 var phoneNumberRegex = regexp.MustCompile(`\(?\d{3}\)?[-\.]? *\d{3}[-\.]? *[-\.]?\d{4}`)
@@ -24,29 +31,13 @@ var blockList = map[string]string{
 	"malikiumar085":   "too spammy",
 	"covidinfoleads":  "medical",
 	"ITFobOffBot":     "joke",
+	"Ericacl50473675": "spam",
+	"TrevorProject":   "Humanitarian",
 }
 var hashMute = map[string]string{
 	"BloodAid":      "medical",
 	"BloodMatters":  "medical",
 	"PayanSneakers": "too spammy",
-}
-var queryString = `("my number") OR ("call me") OR ("phone number") OR ("call") OR ("reach out") OR ("text") -WhatsApp`
-
-func getTweets(bearerString string) []twitter.Tweet {
-	urlQuery := "https://api.twitter.com/1.1/search/tweets.json?q=" + url.QueryEscape(queryString) + "&result_type=recent&tweet_mode=extended&count=100&include_entities=true&lang=en"
-
-	client := &http.Client{}
-
-	req, _ := http.NewRequest("GET", urlQuery, nil)
-
-	req.Header.Add("Authorization", "Bearer "+bearerString)
-
-	resp, _ := client.Do(req)
-	defer resp.Body.Close()
-	bodybytes, _ := ioutil.ReadAll(resp.Body)
-	responseObject := twitter.Search{}
-	json.Unmarshal(bodybytes, &responseObject)
-	return responseObject.Statuses
 }
 
 func postDiscord(discord *discordgo.Session, message string, channelString string) {
@@ -55,17 +46,20 @@ func postDiscord(discord *discordgo.Session, message string, channelString strin
 
 func shouldPostTweet(currentTweet twitter.Tweet) bool {
 	shouldPost := true
-	if !phoneNumberRegex.MatchString(currentTweet.FullText) {
+	if (currentTweet.ExtendedTweet != nil && !phoneNumberRegex.MatchString(currentTweet.ExtendedTweet.FullText)) || !phoneNumberRegex.MatchString(currentTweet.Text) {
+		fmt.Println("~~~~failed regex~~~~")
 		shouldPost = false
 	}
 	_, blocked := blockList[currentTweet.User.ScreenName]
 	if shouldPost && blocked {
+		fmt.Println("~~~~blocked~~~~")
 		shouldPost = false
 	}
 	if shouldPost {
 		for i := range currentTweet.Entities.Hashtags {
 			_, mutedHashtag := hashMute[currentTweet.Entities.Hashtags[i].Text]
 			if mutedHashtag {
+				fmt.Println("~~~~blocked #~~~~")
 				shouldPost = false
 				break
 			}
@@ -74,32 +68,91 @@ func shouldPostTweet(currentTweet twitter.Tweet) bool {
 	if shouldPost && currentTweet.RetweetedStatus != nil {
 		_, rtblocked := blockList[currentTweet.RetweetedStatus.User.ScreenName]
 		if rtblocked {
+			fmt.Println("~~~~blocked RT~~~~")
 			shouldPost = false
 		}
 		for i := range currentTweet.RetweetedStatus.Entities.Hashtags {
 			_, mutedRTHashtag := hashMute[currentTweet.RetweetedStatus.Entities.Hashtags[i].Text]
 			if mutedRTHashtag {
+				fmt.Println("~~~~blocked #RT~~~~")
 				shouldPost = false
 				break
 			}
 		}
 	}
+	if shouldPost && currentTweet.Retweeted {
+		fmt.Println("~~~~blocked RTd~~~~")
+		shouldPost = false
+	}
 
 	return shouldPost
+}
+
+func tweetStream(discord *discordgo.Session, configObject config.Configuration) {
+	flags := flag.NewFlagSet("user-auth", flag.ExitOnError)
+	consumerKey := flags.String("consumer-key", configObject.TwitterAPI, "Twitter Consumer Key")
+	consumerSecret := flags.String("consumer-secret", configObject.TwitterAPISecret, "Twitter Consumer Secret")
+	accessToken := flags.String("access-token", configObject.TwitterAccess, "Twitter Access Token")
+	accessSecret := flags.String("access-secret", configObject.TwitterAccessSecret, "Twitter Access Secret")
+	flags.Parse(os.Args[1:])
+	flagutil.SetFlagsFromEnv(flags, "TWITTER")
+
+	if *consumerKey == "" || *consumerSecret == "" || *accessToken == "" || *accessSecret == "" {
+		log.Fatal("Consumer key/secret and Access token/secret required")
+	}
+
+	config := oauth1.NewConfig(*consumerKey, *consumerSecret)
+	token := oauth1.NewToken(*accessToken, *accessSecret)
+	// OAuth1 http.Client will automatically authorize Requests
+	httpClient := config.Client(oauth1.NoContext, token)
+
+	// Twitter Client
+	client := twitter.NewClient(httpClient)
+
+	// Convenience Demux demultiplexed stream messages
+	demux := twitter.NewSwitchDemux()
+	demux.Tweet = func(tweet *twitter.Tweet) {
+		fmt.Println(tweet.Text)
+		if shouldPostTweet(*tweet) {
+			fmt.Println("posting >>> https://twitter.com/" + url.QueryEscape(tweet.User.ScreenName) + "/status/" + tweet.IDStr)
+			postDiscord(discord, ">>> https://twitter.com/"+url.QueryEscape(tweet.User.ScreenName)+"/status/"+tweet.IDStr, configObject.ChannelIDString)
+		}
+	}
+
+	fmt.Println("Starting Stream...")
+
+	// FILTER
+	filterParams := &twitter.StreamFilterParams{
+		Track:         []string{"my number", "OR call me", "OR phone number", "OR call", "OR reach out", "OR text", "AND -whatsapp", "AND -is:retweet"},
+		Language:      []string{"en"},
+		StallWarnings: twitter.Bool(true),
+	}
+	stream, err := client.Streams.Filter(filterParams)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Receive messages until stopped or stream quits
+	go demux.HandleChan(stream.Messages)
+
+	// Wait for SIGINT and SIGTERM (HIT CTRL-C)
+	ch := make(chan os.Signal)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	log.Println(<-ch)
+
+	fmt.Println("Stopping Stream...")
+	stream.Stop()
 }
 
 func main() {
 	fileBytes, _ := ioutil.ReadFile("TophandourNumberBot.config")
 	configObject := config.Configuration{}
-	json.Unmarshal(fileBytes, &configObject)
+	error := json.Unmarshal(fileBytes, &configObject)
+	if error != nil {
+		fmt.Println(error.Error())
+	}
 	discord, _ := discordgo.New("Bot " + configObject.BotSecretString)
 	discord.Open()
-
-	tweetList := getTweets(configObject.TweetBearerString)
-	for i := range tweetList {
-		if shouldPostTweet(tweetList[i]) {
-			postDiscord(discord, ">>> https://twitter.com/"+url.QueryEscape(tweetList[i].User.ScreenName)+"/status/"+tweetList[i].IDStr, configObject.ChannelIDString)
-		}
-	}
+	tweetStream(discord, configObject)
 	discord.Close()
 }
