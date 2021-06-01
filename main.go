@@ -2,18 +2,18 @@
 package main
 
 import (
-	"flag"
-	"fmt"
-	"log"
-	"os"
-	"os/signal"
-	"syscall"
-
 	"TophandourNumberBot/config"
 	"encoding/json"
+	"flag"
+	"fmt"
 	"io/ioutil"
+	"log"
 	"net/url"
+	"os"
+	"os/signal"
 	"regexp"
+	"strings"
+	"syscall"
 
 	"github.com/coreos/pkg/flagutil"
 	"github.com/dghubble/go-twitter/twitter"
@@ -33,6 +33,7 @@ var blockList = map[string]string{
 	"ITFobOffBot":     "joke",
 	"Ericacl50473675": "spam",
 	"TrevorProject":   "Humanitarian",
+	"TwitterSupport":  "irrelevant",
 }
 var hashMute = map[string]string{
 	"BloodAid":      "medical",
@@ -47,26 +48,43 @@ func postDiscord(discord *discordgo.Session, message string, channelString strin
 func shouldPostTweet(currentTweet twitter.Tweet) bool {
 	shouldPost := true
 	if shouldPost && currentTweet.RetweetedStatus != nil {
-		fmt.Println("~~~~blocked RTd~~~~")
+		//fmt.Println("~~~~blocked RTd~~~~")
 		shouldPost = false
 	}
-
+	if shouldPost && currentTweet.Place != nil && currentTweet.Place.CountryCode != "" &&
+		currentTweet.Place.CountryCode != "US" && currentTweet.Place.CountryCode != "CA" &&
+		currentTweet.Place.CountryCode != "EN" {
+		//fmt.Println("~~~~failed country code~~~~")
+		shouldPost = false
+	}
+	if shouldPost && ((currentTweet.ExtendedTweet == nil &&
+		strings.Contains(strings.ToLower(currentTweet.Text), "+91")) ||
+		(currentTweet.ExtendedTweet != nil && strings.Contains(strings.ToLower(currentTweet.ExtendedTweet.FullText), "+91"))) {
+		//fmt.Println("~~~~failed India area code~~~~")
+		shouldPost = false
+	}
+	if shouldPost && ((currentTweet.ExtendedTweet == nil &&
+		strings.Contains(strings.ToLower(currentTweet.Text), "whatsapp")) ||
+		(currentTweet.ExtendedTweet != nil && strings.Contains(strings.ToLower(currentTweet.ExtendedTweet.FullText), "whatsapp"))) {
+		//fmt.Println("~~~~failed watsapp regex~~~~")
+		shouldPost = false
+	}
 	if shouldPost && ((currentTweet.ExtendedTweet == nil &&
 		!phoneNumberRegex.MatchString(currentTweet.Text)) ||
 		(currentTweet.ExtendedTweet != nil && !phoneNumberRegex.MatchString(currentTweet.ExtendedTweet.FullText))) {
-		fmt.Println("~~~~failed regex~~~~")
+		//fmt.Println("~~~~failed regex~~~~")
 		shouldPost = false
 	}
 	_, blocked := blockList[currentTweet.User.ScreenName]
 	if shouldPost && blocked {
-		fmt.Println("~~~~blocked~~~~")
+		//fmt.Println("~~~~blocked~~~~")
 		shouldPost = false
 	}
 	if shouldPost {
 		for i := range currentTweet.Entities.Hashtags {
 			_, mutedHashtag := hashMute[currentTweet.Entities.Hashtags[i].Text]
 			if mutedHashtag {
-				fmt.Println("~~~~blocked #~~~~")
+				//fmt.Println("~~~~blocked #~~~~")
 				shouldPost = false
 				break
 			}
@@ -75,13 +93,13 @@ func shouldPostTweet(currentTweet twitter.Tweet) bool {
 	if shouldPost && currentTweet.RetweetedStatus != nil {
 		_, rtblocked := blockList[currentTweet.RetweetedStatus.User.ScreenName]
 		if rtblocked {
-			fmt.Println("~~~~blocked RT~~~~")
+			//fmt.Println("~~~~blocked RT~~~~")
 			shouldPost = false
 		}
 		for i := range currentTweet.RetweetedStatus.Entities.Hashtags {
 			_, mutedRTHashtag := hashMute[currentTweet.RetweetedStatus.Entities.Hashtags[i].Text]
 			if mutedRTHashtag {
-				fmt.Println("~~~~blocked #RT~~~~")
+				//fmt.Println("~~~~blocked #RT~~~~")
 				shouldPost = false
 				break
 			}
@@ -115,10 +133,16 @@ func tweetStream(discord *discordgo.Session, configObject config.Configuration) 
 	// Convenience Demux demultiplexed stream messages
 	demux := twitter.NewSwitchDemux()
 	demux.Tweet = func(tweet *twitter.Tweet) {
-		fmt.Println(tweet.Text)
+		//fmt.Println(tweet.Text)
 		if shouldPostTweet(*tweet) {
 			fmt.Println("posting >>> https://twitter.com/" + url.QueryEscape(tweet.User.ScreenName) + "/status/" + tweet.IDStr)
-			postDiscord(discord, ">>> https://twitter.com/"+url.QueryEscape(tweet.User.ScreenName)+"/status/"+tweet.IDStr, configObject.ChannelIDString)
+			if (tweet.Entities != nil && tweet.Entities.Media != nil && len(tweet.Entities.Media) > 0) ||
+				(tweet.ExtendedEntities != nil && tweet.ExtendedEntities.Media != nil && len(tweet.ExtendedEntities.Media) > 0) ||
+				(tweet.ExtendedTweet != nil && tweet.ExtendedTweet.Entities != nil && len(tweet.ExtendedTweet.Entities.Media) > 0) {
+				postDiscord(discord, ">>> https://twitter.com/"+url.QueryEscape(tweet.User.ScreenName)+"/status/"+tweet.IDStr, configObject.MediaChannelIDString)
+			} else {
+				postDiscord(discord, ">>> https://twitter.com/"+url.QueryEscape(tweet.User.ScreenName)+"/status/"+tweet.IDStr, configObject.ChannelIDString)
+			}
 		}
 	}
 
@@ -126,7 +150,7 @@ func tweetStream(discord *discordgo.Session, configObject config.Configuration) 
 
 	// FILTER
 	filterParams := &twitter.StreamFilterParams{
-		Track:         []string{"my number", "OR call me", "OR phone number", "OR call", "OR reach out", "OR text", "-whatsapp", "exclude:retweet"},
+		Track:         []string{"my number", "call me", "phone number", "call", "reach out", "text", "reach me", "-whatsapp -is:retweet"},
 		Language:      []string{"en"},
 		StallWarnings: twitter.Bool(true),
 	}
