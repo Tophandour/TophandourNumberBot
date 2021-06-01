@@ -46,7 +46,14 @@ func postDiscord(discord *discordgo.Session, message string, channelString strin
 
 func shouldPostTweet(currentTweet twitter.Tweet) bool {
 	shouldPost := true
-	if (currentTweet.ExtendedTweet != nil && !phoneNumberRegex.MatchString(currentTweet.ExtendedTweet.FullText)) || !phoneNumberRegex.MatchString(currentTweet.Text) {
+	if shouldPost && currentTweet.RetweetedStatus != nil {
+		fmt.Println("~~~~blocked RTd~~~~")
+		shouldPost = false
+	}
+
+	if shouldPost && ((currentTweet.ExtendedTweet == nil &&
+		!phoneNumberRegex.MatchString(currentTweet.Text)) ||
+		(currentTweet.ExtendedTweet != nil && !phoneNumberRegex.MatchString(currentTweet.ExtendedTweet.FullText))) {
 		fmt.Println("~~~~failed regex~~~~")
 		shouldPost = false
 	}
@@ -79,10 +86,6 @@ func shouldPostTweet(currentTweet twitter.Tweet) bool {
 				break
 			}
 		}
-	}
-	if shouldPost && currentTweet.Retweeted {
-		fmt.Println("~~~~blocked RTd~~~~")
-		shouldPost = false
 	}
 
 	return shouldPost
@@ -123,7 +126,7 @@ func tweetStream(discord *discordgo.Session, configObject config.Configuration) 
 
 	// FILTER
 	filterParams := &twitter.StreamFilterParams{
-		Track:         []string{"my number", "OR call me", "OR phone number", "OR call", "OR reach out", "OR text", "AND -whatsapp", "AND -is:retweet"},
+		Track:         []string{"my number", "OR call me", "OR phone number", "OR call", "OR reach out", "OR text", "-whatsapp", "exclude:retweet"},
 		Language:      []string{"en"},
 		StallWarnings: twitter.Bool(true),
 	}
