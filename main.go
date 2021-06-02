@@ -22,7 +22,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-var phoneNumberRegex = regexp.MustCompile(`\(?\d{3}\)?[-\.]? *\d{3}[-\.]? *[-\.]?\d{4}`)
+var phoneNumberRegex = regexp.MustCompile(`(\+?1{1}[-.● ]?)?[(]?([2-9]{1}[0-9]{2})\)?[-.● ]?([1-9]{1}[0-9]{2})[-.● ]?([0-9]{4})`)
 var blockList = map[string]string{
 	"BloodAid":        "medical",
 	"bloodreqbot":     "medical",
